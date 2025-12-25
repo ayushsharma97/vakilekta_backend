@@ -30,12 +30,12 @@ const client = twilio(
 
 const generateOTP = () => Math.floor(100000 + Math.random() * 900000);
 
-const sendOTP = async (phone,otp) => {
+const sendOTP = async (phone, otp) => {
 
     await client.messages.create({
         body: `Your OTP is ${otp}`,
         from: process.env.TWILIO_PHONE_NUMBER,
-        to: "+91"+phone, // e.g. +919876543210
+        to: "+91" + phone, // e.g. +919876543210
     });
 
     return otp;
@@ -129,7 +129,7 @@ exports.SendOTP = async (req, res) => {
 // };
 
 exports.verifyOtpAndLogin = async (req, res) => {
-     try {
+    try {
         const { phone, otp } = req.body;
 
         if (!phone || !otp) {
@@ -197,31 +197,43 @@ exports.signup = async (req, res) => {
             address,
             latitude,
             longitude,
-            photoUrl
+            photoUrl,
+            OTP,
+            phone
         } = req.body;
 
-        const { firebaseToken } = req.body;
 
 
-        // Verify Firebase ID token
-        const decoded = await admin.auth().verifyIdToken(firebaseToken);
+        const normalizePhone = normalizePhone(phone);
 
-        const phone = normalizePhone(decoded.phone_number);
+        const [otpRows] = await pool.query(
+            `SELECT * FROM otp_logs
+             WHERE mobile = ?
+               AND otp = ?
+               AND is_used = 0
+               AND expires_at > NOW()
+             ORDER BY id DESC
+             LIMIT 1`,
+            [normalizePhone, OTP]
+        );
 
-        if (!phone || !name) {
+        if (otpRows.length === 0) {
+            return res.status(401).json({ message: "Invalid or expired OTP" });
+        }
+
+        await pool.query(
+            "UPDATE otp_logs SET is_used = 1 WHERE id = ?",
+            [otpRows[0].id]
+        );
+
+        if (!normalizePhone || !name) {
             return res.status(400).json({ message: 'Required fields missing' });
         }
 
 
-        if (!firebaseToken) {
-            return res.status(400).json({ message: "Token required" });
-        }
-
-
-
         const [exists] = await pool.query(
             'SELECT id FROM advocate_user WHERE tel_no = ?',
-            [phone]
+            [normalizePhone]
         );
 
         if (exists.length > 0) {
@@ -233,7 +245,7 @@ exports.signup = async (req, res) => {
             (tel_no, enrollment_no, enrollment_date, bar_association, name, Address, ADV_Photo, Latitude, Longitude)
             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
             [
-                phone,
+                normalizePhone,
                 regNo,
                 regDate,
                 barAssociation,
