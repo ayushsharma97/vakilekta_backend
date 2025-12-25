@@ -1,5 +1,4 @@
 const db = require("../config/db");
-const admin = require("../config/firebase");
 const jwt = require("jsonwebtoken");
 const { pool } = require('../config/db')
 const twilio = require('twilio');
