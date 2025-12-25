@@ -1,0 +1,26 @@
+{
+  "name": "vakilekta-backend",
+  "version": "1.0.0",
+  "description": "vakilekta backend",
+  "license": "ISC",
+  "author": "Ayush sharma",
+  "type": "commonjs",
+  "main": "index.js",
+  "scripts": {
+    "test": "echo \"Error: no test specified\" && exit 1",
+    "start": "nodemon index.js"
+  },
+  "dependencies": {
+    "axios": "^1.13.2",
+    "cloudinary": "^2.8.0",
+    "dotenv": "^17.2.3",
+    "express": "^5.2.1",
+    "firebase-admin": "^13.6.0",
+    "jsonwebtoken": "^9.0.3",
+    "multer": "^2.0.2",
+    "mysql2": "^3.15.3",
+    "nodemon": "^3.1.11",
+    "twilio": "^5.11.1",
+    "xlsx": "^0.18.5"
+  }
+}
