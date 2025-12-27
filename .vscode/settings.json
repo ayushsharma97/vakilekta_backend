@@ -1,0 +1,8 @@
+{
+    "appService.zipIgnorePattern": [
+        "node_modules{,/**}",
+        ".vscode{,/**}"
+    ],
+    "appService.defaultWebAppToDeploy": "/subscriptions/8036ed5c-4d40-4588-a580-0246004a6b2b/resourceGroups/vakilekta_group/providers/Microsoft.Web/sites/vakilekta",
+    "appService.deploySubpath": "."
+}
