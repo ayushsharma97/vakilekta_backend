@@ -1,24 +1,16 @@
-const db = require("../config/db");
 const jwt = require("jsonwebtoken");
-const { pool } = require('../config/db')
-const twilio = require('twilio');
+const twilio = require("twilio");
+
+const OtpLog = require("../models/otpLog");
+const AdvocateUser = require("../models/AdvocateUser");
+
+/* ================= HELPERS ================= */
 
 function normalizePhone(phone) {
     if (!phone) return null;
-
-    // remove spaces, hyphens
     phone = phone.replace(/\s|-/g, '');
-
-    // remove +91
-    if (phone.startsWith('+91')) {
-        phone = phone.slice(3);
-    }
-
-    // remove leading 0 (optional)
-    if (phone.startsWith('0') && phone.length === 11) {
-        phone = phone.slice(1);
-    }
-
+    if (phone.startsWith('+91')) phone = phone.slice(3);
+    if (phone.startsWith('0') && phone.length === 11) phone = phone.slice(1);
     return phone;
 }
 
@@ -27,152 +19,83 @@ const client = twilio(
     process.env.TWILIO_AUTH_TOKEN
 );
 
-const generateOTP = () => Math.floor(100000 + Math.random() * 900000);
-
 const sendOTP = async (phone, otp) => {
-
     await client.messages.create({
         body: `Your OTP is ${otp}`,
         from: process.env.TWILIO_PHONE_NUMBER,
-        to: "+91" + phone, // e.g. +919876543210
+        to: "+91" + phone,
     });
-
-    return otp;
 };
+
+/* ================= SEND OTP ================= */
 
 exports.SendOTP = async (req, res) => {
     try {
         const { phone } = req.body;
-
-        if (!phone) {
-            return res.status(400).json({ message: "Phone required" });
-        }
+        if (!phone) return res.status(400).json({ message: "Phone required" });
 
         const normalizedPhone = normalizePhone(phone);
-
-        // Generate OTP
         const otp = Math.floor(100000 + Math.random() * 900000).toString();
         const expiresAt = new Date(Date.now() + 5 * 60 * 1000);
 
         // Invalidate old OTPs
-        await pool.execute(
-            'UPDATE otp_logs SET is_used = 1 WHERE mobile = ?',
-            [normalizedPhone]
+        await OtpLog.updateMany(
+            { mobile: normalizedPhone },
+            { $set: { is_used: true } }
         );
 
         // Store new OTP
-        await pool.execute(
-            'INSERT INTO otp_logs (mobile, otp, expires_at, is_used) VALUES (?, ?, ?, 0)',
-            [normalizedPhone, otp, expiresAt]
-        );
+        await OtpLog.create({
+            mobile: normalizedPhone,
+            otp,
+            expires_at: expiresAt
+        });
 
-        // Send OTP via Twilio
         await sendOTP(normalizedPhone, otp);
 
-        res.json({ success: true, message: 'OTP sent successfully' });
+        res.json({ success: true, message: "OTP sent successfully" });
 
     } catch (error) {
         console.error(error);
-        res.status(500).json({ success: false, message: 'Failed to send OTP' });
+        res.status(500).json({ success: false, message: "Failed to send OTP" });
     }
-}
+};
 
-//     try {
-//         const { firebaseToken } = req.body;
-
-//         if (!firebaseToken) {
-//             return res.status(400).json({ message: "Token required" });
-//         }
-
-//         // Verify Firebase ID token
-//         const decoded = await admin.auth().verifyIdToken(firebaseToken);
-
-
-//         const phone = normalizePhone(decoded.phone_number);
-
-//         console.log(phone)
-
-
-//         // Check advocate exists
-//         const [rows] = await pool.query(
-//             "SELECT * FROM advocate_user WHERE tel_no = ?",
-//             [phone]
-//         );
-
-//         if (rows.length === 0) {
-//             return res.status(404).json({ message: "Advocate not found" });
-//         }
-
-//         const advocate = rows[0];
-
-//         // Generate JWT
-//         const token = jwt.sign(
-//             {
-//                 id: advocate.id,
-//                 enrollmentNo: advocate.enrollment_no,
-//                 phone: phone,
-//             },
-//             process.env.JWT_SECRET,
-//             { expiresIn: "7d" }
-//         );
-
-//         res.json({
-//             success: true,
-//             token,
-//             advocate,
-//         });
-//     } catch (err) {
-//         console.error(err);
-//         res.status(401).json({ message: "Invalid OTP or token" });
-//     }
-// };
+/* ================= VERIFY OTP & LOGIN ================= */
 
 exports.verifyOtpAndLogin = async (req, res) => {
     try {
         const { phone, otp } = req.body;
-
-        if (!phone || !otp) {
+        if (!phone || !otp)
             return res.status(400).json({ message: "Phone & OTP required" });
-        }
 
         const normalizedPhone = normalizePhone(phone);
 
-        const [otpRows] = await pool.query(
-            `SELECT * FROM otp_logs
-             WHERE mobile = ?
-               AND otp = ?
-               AND is_used = 0
-               AND expires_at > NOW()
-             ORDER BY id DESC
-             LIMIT 1`,
-            [normalizedPhone, otp]
-        );
+        const otpDoc = await OtpLog.findOne({
+            mobile: normalizedPhone,
+            otp,
+            is_used: false,
+            expires_at: { $gt: new Date() }
+        }).sort({ createdAt: -1 });
 
-        if (otpRows.length === 0) {
+        if (!otpDoc)
             return res.status(401).json({ message: "Invalid or expired OTP" });
-        }
 
-        await pool.query(
-            "UPDATE otp_logs SET is_used = 1 WHERE id = ?",
-            [otpRows[0].id]
-        );
+        otpDoc.is_used = true;
+        await otpDoc.save();
 
-        const [rows] = await pool.query(
-            "SELECT * FROM advocate_user WHERE tel_no = ?",
-            [normalizedPhone]
-        );
-
-        if (rows.length === 0) {
+        const advocate = await AdvocateUser.findOne({ tel_no: normalizedPhone });
+        if (!advocate)
             return res.status(404).json({ message: "Advocate not found" });
-        }
-
-        const advocate = rows[0];
 
         const token = jwt.sign(
             {
-                id: advocate.id,
+                id: advocate._id,
                 enrollmentNo: advocate.enrollment_no,
                 phone: normalizedPhone,
+                lat: advocate.Latitude,
+                long: advocate.Longitude,
+                address: advocate.address
             },
             process.env.JWT_SECRET,
             { expiresIn: "7d" }
@@ -185,6 +108,8 @@ exports.verifyOtpAndLogin = async (req, res) => {
         res.status(500).json({ message: "OTP verification failed" });
     }
 };
+
+/* ================= SIGNUP ================= */
 
 exports.signup = async (req, res) => {
     try {
@@ -201,84 +126,69 @@ exports.signup = async (req, res) => {
             phone
         } = req.body;
 
+        const normalizedPhone = normalizePhone(phone);
+        if (!normalizedPhone || !name) {
+            return res.status(400).json({ message: "Required fields missing" });
+        }
 
+        /* 🔐 OTP VERIFY */
+        const otpDoc = await OtpLog.findOne({
+            mobile: normalizedPhone,
+            otp: OTP,
+            is_used: false,
+            expires_at: { $gt: new Date() }
+        }).sort({ createdAt: -1 });
 
-        const normalizePhone = normalizePhone(phone);
-
-        const [otpRows] = await pool.query(
-            `SELECT * FROM otp_logs
-             WHERE mobile = ?
-               AND otp = ?
-               AND is_used = 0
-               AND expires_at > NOW()
-             ORDER BY id DESC
-             LIMIT 1`,
-            [normalizePhone, OTP]
-        );
-
-        if (otpRows.length === 0) {
+        if (!otpDoc) {
             return res.status(401).json({ message: "Invalid or expired OTP" });
         }
 
-        await pool.query(
-            "UPDATE otp_logs SET is_used = 1 WHERE id = ?",
-            [otpRows[0].id]
-        );
+        otpDoc.is_used = true;
+        await otpDoc.save();
 
-        if (!normalizePhone || !name) {
-            return res.status(400).json({ message: 'Required fields missing' });
+        /* 🔁 CHECK EXISTING USER */
+        const exists = await AdvocateUser.findOne({ tel_no: normalizedPhone });
+        if (exists) {
+            return res.status(409).json({ message: "User already exists" });
         }
 
+        /* 📍 CREATE USER WITH LOCATION */
+        const user = await AdvocateUser.create({
+            tel_no: normalizedPhone,
+            enrollment_no: regNo,
+            enrollment_date: regDate,
+            bar_association: barAssociation,
+            name,
+            address,
+            ADV_Photo: photoUrl,
 
-        const [exists] = await pool.query(
-            'SELECT id FROM advocate_user WHERE tel_no = ?',
-            [normalizePhone]
-        );
+            Latitude: latitude,
+            Longitude: longitude,
 
-        if (exists.length > 0) {
-            return res.status(409).json({ message: 'User already exists' });
-        }
+            // 🔥 IMPORTANT PART
+            location: (latitude && longitude) ? {
+                type: "Point",
+                coordinates: [Number(longitude), Number(latitude)]
+            } : undefined
+        });
 
-        const [result] = await pool.query(
-            `INSERT INTO advocate_user 
-            (tel_no, enrollment_no, enrollment_date, bar_association, name, Address, ADV_Photo, Latitude, Longitude)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-            [
-                normalizePhone,
-                regNo,
-                regDate,
-                barAssociation,
-                name,
-                address,
-                photoUrl,
-                latitude,
-                longitude,
-            ]
-        );
-
-        const userId = result.insertId;
-
-        /* 🔹 CREATE JWT */
+        /* 🔑 JWT */
         const token = jwt.sign(
-            { id: userId, phone },
+            { id: user._id, phone: normalizedPhone },
             process.env.JWT_SECRET,
             { expiresIn: "7d" }
         );
 
-        /* 🔹 RESPONSE */
         res.status(201).json({
-            message: 'Signup successful',
+            success: true,
+            message: "Signup successful",
             token,
-            user: {
-                id: userId,
-                phone,
-                name,
-                photo: photoUrl,
-            },
+            user
         });
 
     } catch (err) {
-        console.error(err);
-        res.status(500).json({ message: 'Signup failed' });
+        console.error("Signup error:", err);
+        res.status(500).json({ message: "Signup failed" });
     }
 };
+

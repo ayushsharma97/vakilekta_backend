@@ -1,19 +1,18 @@
-const db = require("../config/db");
-const XLSX = require("xlsx");
-const { pool } = require('../config/db')
+const ExcelJS = require("exceljs");
+const fs = require("fs");
+const AdvocateUser = require("../models/AdvocateUser");
+
+/* ================= SEARCH ================= */
 
 exports.searchByName = async (req, res) => {
     try {
         const { name } = req.query;
 
-        console.log(name)
-        // Destructure rows correctly
-        const [rows, fields] = await pool.execute(
-            "SELECT * FROM advocate_user WHERE name LIKE ?",
-            [`%${name}%`]
-        );
+        const data = await AdvocateUser.find({
+            name: { $regex: name, $options: "i" }
+        });
 
-        res.json(rows);
+        res.json(data);
     } catch (err) {
         console.error(err);
         res.status(500).json({ error: "Database query failed" });
@@ -24,260 +23,191 @@ exports.searchByEnrollment = async (req, res) => {
     try {
         const { EnrollmentNo } = req.query;
 
-        console.log(EnrollmentNo)
-        // Destructure rows correctly
-        const [rows, fields] = await pool.execute(
-            "SELECT * FROM advocate_user WHERE enrollment_no LIKE ?",
-            [`%${EnrollmentNo}%`]
-        );
+        const data = await AdvocateUser.find({
+            enrollment_no: { $regex: EnrollmentNo, $options: "i" }
+        });
 
-        res.json(rows);
+        res.json(data);
     } catch (err) {
         console.error(err);
         res.status(500).json({ error: "Database query failed" });
     }
 };
 
-function excelDateToJSDate(serial) {
-    if (!serial) return null;
-    const utc_days = Math.floor(serial - 25569);
-    const utc_value = utc_days * 86400;
-    return new Date(utc_value * 1000);
+/* ================= EXCEL DATE ================= */
+
+function excelDateToJSDate(value) {
+    if (!value) return null;
+    if (value instanceof Date) return value;
+    return new Date(Math.round((value - 25569) * 86400 * 1000));
 }
 
+/* ================= EXCEL UPLOAD ================= */
 
 exports.uploadExcel = async (req, res) => {
     try {
-        if (!req.file) {
-            return res.status(400).json({ error: "Excel file is required" });
+        if (!req.file)
+            return res.status(400).json({ error: "No file uploaded" });
+
+        const workbook = new ExcelJS.stream.xlsx.WorkbookReader(req.file.path);
+        let batch = [];
+        let inserted = 0;
+
+        for await (const worksheet of workbook) {
+            if (worksheet.id !== 1) continue;
+
+            for await (const row of worksheet) {
+                if (row.number === 1) continue;
+
+                const enrollmentNo = row.getCell(2).text?.trim();
+                if (!enrollmentNo) continue;
+
+                const telNo = row.getCell(15).text?.trim();
+                if (!telNo) continue; // 🚫 skip if phone missing
+
+                const address = [
+                    row.getCell(6).text,
+                    row.getCell(7).text,
+                    row.getCell(8).text
+                ].filter(Boolean).join(", ");
+
+                batch.push({
+                    enrollment_no: enrollmentNo,
+                    enrollment_date: excelDateToJSDate(row.getCell(3).value),
+                    name: row.getCell(5).text || null,
+                    address,
+                    city: row.getCell(9).text || null,
+                    bar_association: row.getCell(13).text || null,
+                    tel_no: telNo
+                });
+
+                if (batch.length === 500) {
+                    await AdvocateUser.insertMany(batch, { ordered: false });
+                    inserted += batch.length;
+                    batch = [];
+                }
+            }
         }
 
-        const workbook = XLSX.readFile(req.file.path);
-        const sheetName = workbook.SheetNames[0];
-        const sheet = workbook.Sheets[sheetName];
-
-        const data = XLSX.utils.sheet_to_json(sheet);
-
-        if (!data.length) {
-            return res.status(400).json({ error: "Excel is empty" });
+        if (batch.length) {
+            await AdvocateUser.insertMany(batch, { ordered: false });
+            inserted += batch.length;
         }
 
-        const insertPromises = data.map(row => {
-            const enrollmentNo = row["Enrolment No. "]?.toString().trim();
-
-            if (!enrollmentNo) return null; // skip invalid rows
-
-            return db.query(
-                `INSERT INTO advocate_user
-                (enrollment_no, enrollment_date, name, bar_association, tel_no, alternative_no)
-                VALUES (?, ?, ?, ?, ?, ?)`,
-                [
-                    enrollmentNo,
-                    excelDateToJSDate(row["Enrol. Dt."]),
-                    row["Name of Advocate"]?.trim() || null,
-                    row["Bar Association"]?.trim() || null,
-                    row["Tel. No. "]?.toString().trim() || null,
-                    null
-                ]
-            );
-        });
-
-        await Promise.all(insertPromises.filter(Boolean));
+        fs.unlinkSync(req.file.path);
 
         res.json({
             success: true,
             message: "Excel uploaded successfully",
-            totalInserted: insertPromises.length
+            totalInserted: inserted
         });
 
     } catch (err) {
         console.error(err);
-        res.status(500).json({ error: "Upload failed" });
+        res.status(500).json({ error: "Excel processing failed" });
     }
 };
+
+
+/* ================= GET PHONE ================= */
 
 exports.getPhoneByEnrollment = async (req, res) => {
     try {
         const { enrollmentNo } = req.query;
 
-        if (!enrollmentNo) {
-            return res.status(400).json({
-                error: "Enrollment number is required"
-            });
-        }
+        const user = await AdvocateUser.findOne({
+            enrollment_no: enrollmentNo.trim()
+        }).select("enrollment_no tel_no");
 
-        const [rows] = await pool.query(
-            `SELECT 
-                enrollment_no,
-                tel_no,
-                alternative_no
-             FROM advocate_user
-             WHERE enrollment_no = ?`,
-            [enrollmentNo.trim()]
-        );
-
-        if (rows.length === 0) {
-            return res.status(404).json({
-                error: "Advocate not found"
-            });
-        }
+        if (!user)
+            return res.status(404).json({ error: "Advocate not found" });
 
         res.json({
             success: true,
             data: {
-                enrollmentNo: rows[0].enrollment_no,
-                phone: rows[0].tel_no,
-                alternativePhone: rows[0].alternative_no
+                enrollmentNo: user.enrollment_no,
+                phone: user.tel_no
             }
         });
 
     } catch (error) {
-        console.error("getPhoneByEnrollment error:", error);
-        res.status(500).json({
-            error: "Internal server error"
-        });
+        console.error(error);
+        res.status(500).json({ error: "Internal server error" });
     }
 };
 
+/* ================= PROFILE ================= */
+
 exports.getProfile = async (req, res) => {
     try {
-        console.log(req.user)
-        const userId = req.user.id; // from JWT
+        const user = await AdvocateUser.findById(req.user.id);
 
-        const [rows] = await pool.execute(
-            `SELECT 
-                enrollment_no,
-                enrollment_date,
-                name,
-                bar_association,
-                tel_no,
-                alternative_no,
-                address,
-                latitude,
-                longitude,
-                ADV_Photo
-             FROM advocate_user
-             WHERE id = ?`,
-            [userId]
-        );
+        if (!user)
+            return res.status(404).json({ error: "Profile not found" });
 
-        if (rows.length === 0) {
-            return res.status(404).json({
-                error: "Profile not found"
-            });
-        }
-
-        res.json({
-            success: true,
-            data: rows[0]
-        });
+        res.json({ success: true, data: user });
 
     } catch (err) {
-        console.error("getProfile error:", err);
-        res.status(500).json({
-            error: "Internal server error"
-        });
+        console.error(err);
+        res.status(500).json({ error: "Internal server error" });
     }
 };
 
 exports.updateProfile = async (req, res) => {
     try {
-        const userId = req.user.id; // from auth middleware
+        const { latitude, longitude } = req.body;
 
-        const {
-            name,
-            bar_association,
-            tel_no,
-            address,
-            latitude,
-            longitude,
-            photo_url,
-        } = req.body;
+        const updated = await AdvocateUser.findByIdAndUpdate(
+            req.user.id,
+            {
+                ...req.body,
+                location: latitude && longitude ? {
+                    type: "Point",
+                    coordinates: [longitude, latitude]
+                } : undefined
+            },
+            { new: true }
+        );
 
-        const sql = `
-      UPDATE advocate_user
-      SET
-        name = ?,
-        bar_association = ?,
-        tel_no = ?,
-        Address = ?,
-        Latitude = ?,
-        Longitude = ?,
-        ADV_Photo = ?
-      WHERE id = ?
-    `;
-
-        const values = [
-            name,
-            bar_association,
-            tel_no,
-            address,
-            latitude,
-            longitude,
-            photo_url,
-            userId,
-        ];
-
-        const [result] = await pool.query(sql, values); // ✅ PROMISE
-
-        if (result.affectedRows === 0) {
+        if (!updated)
             return res.status(404).json({ message: "Profile not found" });
-        }
 
-        return res.json({
+        res.json({
             success: true,
             message: "Profile updated successfully",
+            data: updated
         });
 
     } catch (error) {
-        console.error("Update profile error:", error);
-        return res.status(500).json({ message: "Server error" });
+        console.error(error);
+        res.status(500).json({ message: "Server error" });
     }
 };
+
+/* ================= NEARBY ADVOCATES ================= */
 
 exports.getNearbyAdvocates = async (req, res) => {
     try {
         const { latitude, longitude } = req.query;
 
-        if (!latitude || !longitude) {
-            return res.status(400).json({ message: "Lat & Lng required" });
-        }
-
-        const radius = 5;
-
-        const sql = `
-      SELECT
-        id,
-        name,
-        tel_no,
-        address,
-        ADV_Photo,
-        latitude,
-        longitude,
-        (
-          6371 * acos(
-            cos(radians(?)) * cos(radians(latitude)) *
-            cos(radians(longitude) - radians(?)) +
-            sin(radians(?)) * sin(radians(latitude))
-          )
-        ) AS distance
-      FROM advocate_user
-      HAVING distance <= ?
-      ORDER BY distance ASC
-    `;
-
-        const [rows] = await pool.query(sql, [
-            latitude,
-            longitude,
-            latitude,
-            radius,
-        ]);
+        const data = await AdvocateUser.find({
+            location: {
+                $near: {
+                    $geometry: {
+                        type: "Point",
+                        coordinates: [Number(longitude), Number(latitude)]
+                    },
+                    $maxDistance: 5000 // 5 KM
+                }
+            }
+        }).select("name tel_no address ADV_Photo Latitude Longitude");
 
         res.json({
             success: true,
-            count: rows.length,
-            data: rows,
+            count: data.length,
+            data
         });
+
     } catch (err) {
         console.error(err);
         res.status(500).json({ message: "Server error" });
