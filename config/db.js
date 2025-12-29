@@ -26,7 +26,7 @@
 
 const mongoose = require("mongoose");
 
-const MONGO_URI = process.env.MONGODB_URI;
+const MONGO_URI = process.env.MongoDB_URI;
 // or for Atlas:
 // const MONGO_URI = "mongodb+srv://<username>:<password>@cluster.mongodb.net/vakilekta_db";
 
