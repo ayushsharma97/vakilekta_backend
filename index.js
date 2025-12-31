@@ -2,6 +2,7 @@ const express = require("express");
 const dotenv = require("dotenv");
 const cors = require("cors");
 dotenv.config();
+const app = express();
 
 app.use(cors({
   origin: "*",
@@ -17,7 +18,6 @@ const coordinateRoutes = require("./routes/coordinate.routes");
 const uploadRoutes = require("./routes/upload.routes");
 const bannerRoutes = require("./routes/banner.routes");
 
-const app = express();
 
 // Middleware
 app.use(express.json());
@@ -26,7 +26,7 @@ app.use(express.json());
 connectDB();
 
 app.get("/", (req, res) => {
-    res.send("Hello from vakilekta backend");
+  res.send("Hello from vakilekta backend");
 });
 
 // Routes
@@ -39,5 +39,5 @@ app.use("/api/banner", bannerRoutes);
 // Server
 const PORT = process.env.PORT || 3000;
 app.listen(PORT, "0.0.0.0", () => {
-    console.log(`🚀 Server running on port ${PORT}`);
+  console.log(`🚀 Server running on port ${PORT}`);
 });
