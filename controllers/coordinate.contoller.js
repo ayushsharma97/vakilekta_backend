@@ -12,6 +12,7 @@ const getLatLngFromPlaceId = async (req, res) => {
       },
     });
 
+    console.log('Fetched location:', response.data.results);
     const location = response.data.results[0].geometry.location;
 
     res.json({
@@ -19,6 +20,7 @@ const getLatLngFromPlaceId = async (req, res) => {
       lng: location.lng,
     });
   } catch (error) {
+    console.error('Error fetching location:', error);
     res.status(500).json({ error: 'Failed to fetch location' });
   }
 };

@@ -11,7 +11,7 @@ const advocateSchema = new mongoose.Schema(
     tel_no: {
       type: String,
       index: true,
-      sparse: true   // ⭐ IMPORTANT
+      sparse: true
     },
     ADV_Photo: String,
 
@@ -22,15 +22,20 @@ const advocateSchema = new mongoose.Schema(
       type: {
         type: String,
         enum: ["Point"],
-        default: "Point"
+        default: "Point",
+        required: true
       },
       coordinates: {
-        type: [Number], // [lng, lat]
-        index: "2dsphere"
+        type: [Number], // [longitude, latitude]
+        required: true,
+        index: '2dsphere'
       }
     }
   },
   { timestamps: true }
 );
+
+// ✅ THIS IS MANDATORY
+advocateSchema.index({ location: "2dsphere" });
 
 module.exports = mongoose.model("AdvocateUser", advocateSchema);

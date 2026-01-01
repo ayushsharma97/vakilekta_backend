@@ -63,13 +63,17 @@ exports.uploadExcel = async (req, res) => {
                 if (!enrollmentNo) continue;
 
                 const telNo = row.getCell(15).text?.trim();
-                if (!telNo) continue; // 🚫 skip if phone missing
+                if (!telNo) continue; // skip if phone missing
 
                 const address = [
                     row.getCell(6).text,
                     row.getCell(7).text,
                     row.getCell(8).text
                 ].filter(Boolean).join(", ");
+
+
+                // If lat/lng missing, set location to [0,0]
+                const locationCoordinates = [0, 0];
 
                 batch.push({
                     enrollment_no: enrollmentNo,
@@ -78,7 +82,13 @@ exports.uploadExcel = async (req, res) => {
                     address,
                     city: row.getCell(9).text || null,
                     bar_association: row.getCell(13).text || null,
-                    tel_no: telNo
+                    tel_no: telNo,
+                    Latitude: null,
+                    Longitude: null,
+                    location: {
+                        type: "Point",
+                        coordinates: locationCoordinates
+                    }
                 });
 
                 if (batch.length === 500) {
@@ -107,6 +117,7 @@ exports.uploadExcel = async (req, res) => {
         res.status(500).json({ error: "Excel processing failed" });
     }
 };
+
 
 
 /* ================= GET PHONE ================= */
@@ -157,20 +168,36 @@ exports.updateProfile = async (req, res) => {
     try {
         const { latitude, longitude } = req.body;
 
+        const updateData = { ...req.body };
+
+        if (latitude !== undefined && longitude !== undefined) {
+            const lat = Number(latitude);
+            const lng = Number(longitude);
+
+            if (isNaN(lat) || isNaN(lng)) {
+                return res.status(400).json({
+                    message: "Invalid latitude or longitude"
+                });
+            }
+
+            // ✅ update both outer + geo field
+            updateData.Latitude = lat;
+            updateData.Longitude = lng;
+            updateData.location = {
+                type: "Point",
+                coordinates: [lng, lat]
+            };
+        }
+
         const updated = await AdvocateUser.findByIdAndUpdate(
             req.user.id,
-            {
-                ...req.body,
-                location: latitude && longitude ? {
-                    type: "Point",
-                    coordinates: [longitude, latitude]
-                } : undefined
-            },
-            { new: true }
+            { $set: updateData }, // 🔥 important
+            { new: true, runValidators: true }
         );
 
-        if (!updated)
+        if (!updated) {
             return res.status(404).json({ message: "Profile not found" });
+        }
 
         res.json({
             success: true,
@@ -179,10 +206,11 @@ exports.updateProfile = async (req, res) => {
         });
 
     } catch (error) {
-        console.error(error);
+        console.error("Update profile error:", error);
         res.status(500).json({ message: "Server error" });
     }
 };
+
 
 /* ================= NEARBY ADVOCATES ================= */
 
@@ -190,26 +218,41 @@ exports.getNearbyAdvocates = async (req, res) => {
     try {
         const { latitude, longitude } = req.query;
 
-        const data = await AdvocateUser.find({
+        // Validate lat/lng
+        if (!latitude || !longitude) {
+            return res.status(400).json({ message: "Latitude & Longitude are required" });
+        }
+
+        const lat = Number(latitude);
+        const lng = Number(longitude);
+
+        if (isNaN(lat) || isNaN(lng)) {
+            return res.status(400).json({ message: "Invalid latitude or longitude" });
+        }
+
+        // MongoDB geo query
+        const users = await AdvocateUser.find({
             location: {
-                $near: {
+                $nearSphere: {
                     $geometry: {
                         type: "Point",
-                        coordinates: [Number(longitude), Number(latitude)]
+                        coordinates: [lng, lat]  // Always [longitude, latitude]
                     },
-                    $maxDistance: 5000 // 5 KM
+                    $maxDistance: 5000 // 5 km
                 }
             }
         }).select("name tel_no address ADV_Photo Latitude Longitude");
 
         res.json({
             success: true,
-            count: data.length,
-            data
+            count: users.length,
+            data: users
         });
 
     } catch (err) {
-        console.error(err);
+        console.error("Nearby advocates error:", err);
         res.status(500).json({ message: "Server error" });
     }
 };
+
+
