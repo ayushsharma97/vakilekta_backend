@@ -30,9 +30,14 @@ const advocateSchema = new mongoose.Schema(
         required: true,
         index: '2dsphere'
       }
-    }
+    },
+    fcmTokens: {
+      type: [String],
+      default: [],
+    },
   },
-  { timestamps: true }
+  { timestamps: true, strict: false }
+
 );
 
 // ✅ THIS IS MANDATORY

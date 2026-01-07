@@ -8,8 +8,19 @@ exports.searchByName = async (req, res) => {
     try {
         const { name } = req.query;
 
+        if (!name) {
+            return res.status(400).json({ error: "Name is required" });
+        }
+
+        // Split by space → ["name", "surname"]
+        const words = name.trim().split(/\s+/);
+
+        const regexConditions = words.map(word => ({
+            name: { $regex: word, $options: "i" }
+        }));
+
         const data = await AdvocateUser.find({
-            name: { $regex: name, $options: "i" }
+            $and: regexConditions
         });
 
         res.json(data);
@@ -18,6 +29,32 @@ exports.searchByName = async (req, res) => {
         res.status(500).json({ error: "Database query failed" });
     }
 };
+
+exports.SearchByAddress = async (req, res) => {
+    try {
+        const { address } = req.query;
+
+        if (!address) {
+            return res.status(400).json({ error: "Address is required" });
+        }
+
+        const words = address.trim().split(/\s+/);
+
+        const regexConditions = words.map(word => ({
+            address: { $regex: word, $options: "i" }
+        }));
+
+        const data = await AdvocateUser.find({
+            $and: regexConditions
+        });
+
+        res.json(data);
+    }
+    catch (err) {
+        res.status(500).json({ error: "Database query failed" });
+    }
+};
+
 
 exports.searchByEnrollment = async (req, res) => {
     try {
@@ -170,6 +207,8 @@ exports.updateProfile = async (req, res) => {
 
         const updateData = { ...req.body };
 
+        console.log('Update data received:', updateData);
+
         if (latitude !== undefined && longitude !== undefined) {
             const lat = Number(latitude);
             const lng = Number(longitude);
@@ -255,4 +294,64 @@ exports.getNearbyAdvocates = async (req, res) => {
     }
 };
 
+// ================== Add FMC Token ================= */
+exports.saveFCMToken = async (req, res) => {
+    try {
+        const { fcmToken } = req.body;
+        const userId = req.user.id;
+        console.log('User ID:', userId);
+        if (!fcmToken) {
+            return res.status(400).json({ message: 'FCM token is required' });
+        }
+
+        await AdvocateUser.findByIdAndUpdate(
+            userId,
+            {
+                $addToSet: { fcmTokens: fcmToken }, // no duplicates
+            },
+            { new: true }
+        );
+
+        res.status(200).json({
+            message: 'FCM token saved successfully',
+        });
+
+    } catch (err) {
+        console.error('FCM token error:', err);
+        res.status(500).json({ message: 'Server error' });
+    }
+};
+
+// ================== Get FCM Tokens ================= */
+exports.getFCMToken = async (req, res) => {
+    try {
+        const userId = req.user.id;
+        const user = await AdvocateUser.findById(userId).select('fcmTokens');
+
+        if (!user) {
+            return res.status(404).json({ message: 'Advocate not found' });
+        }
+        res.status(200).json({
+            success: true,
+            fcmTokens: user.fcmTokens || [],
+        });
+
+    }
+    catch (err) {
+        console.error('Get FCM token error:', err);
+        res.status(500).json({ message: 'Server error' });
+    }
+}
+
+exports.DeleteAdvocateAccount = async (req, res) => {
+    try {
+        const userId = req.user.id;
+        await AdvocateUser.findByIdAndDelete(userId);
+        res.status(200).json({ message: "Advocate account deleted successfully" });
+    } 
+    catch (err) {
+        console.error('Delete Advocate Account error:', err);
+        res.status(500).json({ message: 'Server error' });
+    }
+}
 
