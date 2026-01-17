@@ -126,6 +126,7 @@ exports.signup = async (req, res) => {
             phone
         } = req.body;
 
+
         const normalizedPhone = normalizePhone(phone);
         if (!normalizedPhone || !name) {
             return res.status(400).json({ message: "Required fields missing" });
@@ -185,6 +186,8 @@ exports.signup = async (req, res) => {
             token,
             user
         });
+
+
 
     } catch (err) {
         console.error("Signup error:", err);

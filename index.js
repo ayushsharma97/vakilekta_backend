@@ -1,8 +1,10 @@
 const express = require("express");
 const dotenv = require("dotenv");
 const cors = require("cors");
+const path = require("path");
 dotenv.config();
 const app = express();
+const fs = require("fs");
 
 app.use(cors({
   origin: "*",
@@ -22,6 +24,11 @@ const bannerRoutes = require("./routes/banner.routes");
 // Middleware
 app.use(express.json());
 
+app.use(
+  "/documents",
+  express.static(path.join(__dirname, "documents"))
+);
+
 // Connect MongoDB
 connectDB();
 
@@ -35,6 +42,13 @@ app.use("/api/advocate", advRoutes);
 app.use("/api/coordinates", coordinateRoutes);
 app.use("/api/upload-profile", uploadRoutes);
 app.use("/api/banner", bannerRoutes);
+app.get("/api/documents", (req, res) => {
+  const files = fs
+    .readdirSync(path.join(__dirname, "documents"))
+    .filter(file => file.endsWith(".pdf"));
+
+  res.json(files);
+});
 // app.use("/api/notifications",notificationRoutes);
 
 // Server
